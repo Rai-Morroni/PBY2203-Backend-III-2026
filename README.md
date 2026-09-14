@@ -88,6 +88,20 @@ Para optimizar el rendimiento, se compararon distintas configuraciones de proces
 - **Resultados**: Reducción drástica del tiempo de procesamiento. Durante la ejecución del cálculo de intereses, la concurrencia generó contención de datos (Deadlocks / Duplicate Entries) por registros legacy duplicados. Esto validó la eficacia de la arquitectura, ya que la política de tolerancia a fallos de Spring Batch manejó los rollbacks automáticamente, aislando los errores y permitiendo que los Jobs finalizaran con estado **COMPLETED**.
 
 
+## Arquitectura Backend for Frontend (BFF) y Seguridad
+
+Para optimizar la comunicación entre el sistema y los diferentes clientes, se implementó el patrón **Backend for Frontend (BFF)** utilizando la estrategia de **Diseño de Endpoints Personalizados**.
+
+*   **BFF Web (`/api/web/**`):** Optimizado para navegadores de escritorio, entregando payloads complejos y detallados para interfaces robustas.
+*   **BFF Móvil (`/api/mobile/**`):** Diseñado con respuestas ligeras y datos esenciales, minimizando el consumo de ancho de banda.
+*   **BFF Cajero Automático (`/api/cajero/**`):** Interfaz enfocada en la seguridad y eficiencia para operaciones críticas (ej. retiros y consultas de saldo).
+
+### Seguridad Implementada
+El sistema está securizado bajo los siguientes estándares:
+*   **Protocolo HTTPS:** Cifrado de extremo a extremo configurado a través de un certificado SSL (Keystore local) activo en el puerto `8443`.
+*   **Autenticación y Autorización (Spring Security):** Se definieron roles estrictos (`WEB`, `MOBILE`, `CAJERO`) mediante autenticación básica. Existe segregación de acceso por canal, impidiendo que un usuario con rol de móvil acceda a endpoints web o de cajero, garantizando la integridad de los datos.
+
+
 ## Jobs disponibles
 
 | Job | Step | Archivo de entrada | Tabla de salida | Tolerancia |
@@ -146,6 +160,7 @@ Los pasos estan configurados como tolerantes a fallos mediante `skip(Exception.c
 src/
 ├── main/java/com/bancoxyz/batch_legacy/
 │   ├── config/       Configuracion de jobs, steps, readers y writers
+|   ├── controller/   Controladores y Maps para endpoints BFF
 │   ├── model/        DTOs de entrada y entidades JPA
 │   ├── processor/    Transformaciones y reglas de negocio
 │   └── repository/   Repositorios Spring Data JPA
