@@ -102,16 +102,17 @@ Dado que el núcleo del proyecto consiste en un procesamiento Spring Batch const
 
 Esta decisión de enfoque permite:
 
-* Cumplir el objetivo principal del patrón BFF: Transformar, filtrar y adaptar la estructura de los datos según las restricciones y capacidades de cada canal cliente (payload ligero vs. pesado).
+* **Cumplir el objetivo principal del patrón BFF**: Transformar, filtrar y adaptar la estructura de los datos según las restricciones y capacidades de cada canal cliente (payload ligero vs. pesado).
 
-* Evitar sobreingeniería: Elimina la latencia de red y la complejidad de orquestación innecesaria en esta etapa de modernización transicional del sistema legacy.
+* **Evitar sobrecarga**: Elimina la latencia de red y la complejidad de orquestación en esta etapa de modernización transicional del sistema legacy.
 
-* Facilitar la escalabilidad futura: Al mantener una estricta modularidad a nivel de paquetes (controller aislado de repository), se prepara el terreno para una eventual extracción de la capa de acceso a datos hacia verdaderos microservicios distribuidos sin afectar a los clientes conectados.
+* **Facilitar la escalabilidad futura**: Al mantener una estricta modularidad a nivel de paquetes (controller aislado de repository), se prepara el terreno para una eventual extracción de la capa de acceso a datos hacia verdaderos microservicios distribuidos.
 
 ### Seguridad Implementada
 El sistema está securizado bajo los siguientes estándares:
 *   **Protocolo HTTPS:** Cifrado de extremo a extremo configurado a través de un certificado SSL (Keystore local) activo en el puerto `8443`.
-*   **Autenticación y Autorización (Spring Security):** Se definieron roles estrictos (`WEB`, `MOBILE`, `CAJERO`) mediante autenticación básica. Existe segregación de acceso por canal, impidiendo que un usuario con rol de móvil acceda a endpoints web o de cajero, garantizando la integridad de los datos.
+*   **Autenticación y Autorización (JWT):** Se migró hacia un modelo Stateless basado en JSON Web Tokens (Bearer Token). Se definieron roles estrictos (`WEB`, `MOBILE`, `CAJERO`).
+    * **Existe segregación de acceso cruzada por canal**: un token generado para un cliente móvil es rechazado con un error `403 Forbidden` si intenta consumir recursos del BFF Web o Cajero, garantizando la confidencialidad de la información crítica.
 
 
 ## Jobs disponibles

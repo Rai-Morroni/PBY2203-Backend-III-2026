@@ -27,12 +27,11 @@ public class JwtFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
 
-        final String authorizationHeader = request.getHeader("Authorization"); // Se obtiene la cabecera de autorización del request
+        final String authorizationHeader = request.getHeader("Authorization");
 
-        String username = null; // Variable para almacenar el nombre de usuario extraído del token
-        String jwt = null; // Variable para almacenar el token JWT extraído de la cabecera
+        String username = null;
+        String jwt = null;
 
-        // Extraer el token de la cabecera "Bearer <token>"
         if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
             jwt = authorizationHeader.substring(7);
             try {
@@ -42,7 +41,6 @@ public class JwtFilter extends OncePerRequestFilter {
             }
         }
 
-        // Si hay un usuario válido y no está autenticado aún en este hilo
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
 
@@ -50,8 +48,6 @@ public class JwtFilter extends OncePerRequestFilter {
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         userDetails, null, userDetails.getAuthorities());
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                
-                // Autenticar formalmente en Spring Security
                 SecurityContextHolder.getContext().setAuthentication(authToken);
             }
         }
