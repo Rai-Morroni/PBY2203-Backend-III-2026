@@ -26,7 +26,7 @@ public class AuthController {
     public Map<String, String> login(@RequestBody LoginRequest request) {
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.username());
         
-        if (passwordEncoder.matches(request.password(), userDetails.getPassword())) {
+        if (passwordEncoder.matches(request.password(), userDetails.getPassword())) { // Se compara la contraseña ingresada con la almacenada en la base de datos
             String token = jwtUtil.generateToken(userDetails);
             return Map.of("token", token);
         }
