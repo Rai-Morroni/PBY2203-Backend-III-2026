@@ -21,7 +21,8 @@ public class SecurityConfig {
         http
             .csrf(csrf -> csrf.disable()) 
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/login").permitAll() // Público para obtener token
+                .requestMatchers("/api/auth/login", "/error").permitAll() // Login público y dispatch de errores
+                .requestMatchers("/api/internal/core/**").permitAll() // Habilita comunicación HTTP interna
                 // Autorización específica por cada canal BFF
                 .requestMatchers("/api/web/**").hasRole("WEB")
                 .requestMatchers("/api/mobile/**").hasRole("MOBILE")

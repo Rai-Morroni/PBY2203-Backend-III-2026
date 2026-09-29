@@ -1,38 +1,59 @@
 package com.bancoxyz.batch_legacy.controller;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import com.bancoxyz.batch_legacy.model.InteresEntity;
-import com.bancoxyz.batch_legacy.repository.InteresRepository;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.List;
+import org.springframework.web.client.RestClient;
+
+import com.bancoxyz.batch_legacy.dto.CajeroOperacionDTO;
+import com.bancoxyz.batch_legacy.exception.OperationLimitExceededException;
+
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
-@RequestMapping("/api/cajero") // Endpoint base para el BFF del cajero automático
+@RequestMapping("/api/cajero")
 public class CajeroBffController {
 
-    @Autowired
-    private InteresRepository interesRepository;
+    private final RestClient restClient;
+    
+    // Control de límite de operaciones críticas por usuario autenticado
+    private final ConcurrentHashMap<String, Integer> sesionesUsuario = new ConcurrentHashMap<>();
+    private static final int MAX_OPERACIONES = 3;
 
-    @GetMapping("/operaciones") // Endpoint para obtener operaciones del cajero automático
-    public Map<String, Object> getAtmOperaciones() {
-        Map<String, Object> response = new HashMap<>();
-        
-        List<InteresEntity> saldos = interesRepository.findAll(); // Simula obtener los saldos de las cuentas para el cajero
-        
-        response.put("canal", "Cajero Automático (Banco Chile)");
-        response.put("operacion", "Consulta de Saldo");
-        
-        if (!saldos.isEmpty()) {
-            // Simula obtener el saldo de la primera cuenta encontrada para el cajero
-            response.put("saldoDisponible", saldos.get(0).getSaldoFinal());
-        } else {
-            response.put("saldoDisponible", 0);
+    public CajeroBffController() {
+        this.restClient = RestClient.create();
+    }
+
+    @GetMapping("/operaciones")
+    public CajeroOperacionDTO getAtmOperaciones() {
+        // 1. Identificar al usuario desde el contexto de seguridad JWT
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+
+        // 2. Validación estricta de límite de sesión para Cajeros
+        int realizadas = sesionesUsuario.getOrDefault(username, 0);
+        if (realizadas >= MAX_OPERACIONES) {
+            throw new OperationLimitExceededException(
+                    "Límite de operaciones críticas por sesión superado. Tarjeta bloqueada por seguridad.");
         }
         
-        return response;
+        // Incrementar contador de operaciones
+        sesionesUsuario.put(username, realizadas + 1);
+
+        // 3. Delegación HTTP al servicio Core
+        Double saldo = restClient.get()
+            .uri("http://127.0.0.1:8080/api/internal/core/saldo")
+                .retrieve()
+                .body(Double.class);
+
+        double saldoSeguro = (saldo != null) ? saldo : 0.0;
+
+        // 4. Mapeo y respuesta mediante DTO
+        return new CajeroOperacionDTO(
+                "Cajero Automático (ATM)",
+                "Consulta de Saldo Seguro",
+                saldoSeguro,
+                MAX_OPERACIONES - (realizadas + 1)
+        );
     }
 }
