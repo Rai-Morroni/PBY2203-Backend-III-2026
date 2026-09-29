@@ -3,7 +3,7 @@ echo =======================================================
 echo Iniciando Ecosistema de Microservicios - Banco XYZ
 echo =======================================================
 
-echo 1. Iniciando infraestructura en Docker (MySQL, Zookeeper, Kafka)...
+echo 1. Iniciando infraestructura en Docker (MySQL y Kafka)...
 docker compose up -d
 timeout /t 10 /nobreak > NUL
 
