@@ -27,7 +27,7 @@ public class MobileBffController {
         
         long safeTotal = (total != null) ? total : 0;
 
-        // 2. Transformación y Mapeo selectivo mediante DTO
+        // 2. Transformación y Mapeo selectivo mediante DTO 
         return new MobileResumenDTO(
                 "App Móvil", 
                 "Datos ligeros cargados", 
