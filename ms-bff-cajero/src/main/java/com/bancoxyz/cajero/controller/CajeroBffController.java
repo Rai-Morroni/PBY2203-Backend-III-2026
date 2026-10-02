@@ -1,50 +1,103 @@
 package com.bancoxyz.cajero.controller;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
+import java.util.concurrent.atomic.AtomicInteger;
+import com.bancoxyz.cajero.exception.OperationLimitExceededException;
+
+import com.bancoxyz.cajero.dto.CajeroOperacionDTO;
+import com.bancoxyz.cajero.dto.RetiroRequestDTO;
+import com.bancoxyz.cajero.dto.TransaccionResponseDTO;
 
 @RestController
 @RequestMapping("/api/cajero")
 public class CajeroBffController {
 
     private final RestClient restClient;
-    
+
     @Autowired
     private KafkaTemplate<String, String> kafkaTemplate;
     private static final String TOPIC_RETIROS = "cajero-retiros-topic";
+
+    // Contadores atómicos para los límites de operaciones
+    private final AtomicInteger contadorConsultas = new AtomicInteger(0);
+    private static final int LIMITE_CONSULTAS = 3; // Límite de consultas de saldo por sesión
+
+    private final AtomicInteger contadorRetiros = new AtomicInteger(0);
+    private static final int LIMITE_RETIROS = 1; // Límite de retiro por sesión
 
     public CajeroBffController() {
         this.restClient = RestClient.builder().baseUrl("http://localhost:8081").build();
     }
 
-    // 1. Tolerancia a Fallos: Circuit Breaker para operaciones síncronas de lectura
+    // 1. Tolerancia a Fallos: Circuit Breaker y contrato DTO
     @GetMapping("/saldo")
     @CircuitBreaker(name = "coreServiceCB", fallbackMethod = "fallbackSaldo")
-    public String consultarSaldoSeguro() {
-        // Llama al ms-core a través de Eureka usando el nombre del servicio
+    public ResponseEntity<CajeroOperacionDTO> consultarSaldoSeguro() {
+        
+        // Control de límite de consultas
+        if (contadorConsultas.incrementAndGet() > LIMITE_CONSULTAS) {
+            throw new OperationLimitExceededException("Ha excedido el límite de " + LIMITE_CONSULTAS + " consultas diarias de saldo.");
+        }
+
         Double saldo = restClient.get()
                 .uri("/api/internal/core/saldo")
                 .retrieve()
                 .body(Double.class);
-        return "Saldo actual: $" + saldo;
+
+        int intentosRestantes = Math.max(0, LIMITE_CONSULTAS - contadorConsultas.get());
+
+        CajeroOperacionDTO response = new CajeroOperacionDTO(
+                "Cajero Automático",
+                "Consulta de Saldo Seguro",
+                saldo != null ? saldo : 0.0,
+                intentosRestantes 
+        );
+        
+        return ResponseEntity.ok(response);
     }
 
-    // Método Fallback: Se ejecuta si MS-CORE se cae, evidenciando resiliencia
-    public String fallbackSaldo(Throwable t) {
-        return "Servicio principal no disponible (Circuit Breaker Abierto). Mostrando saldo en caché: $0.0";
+    public ResponseEntity<CajeroOperacionDTO> fallbackSaldo(Throwable t) {
+        int intentosRestantes = Math.max(0, LIMITE_CONSULTAS - contadorConsultas.get());
+
+        CajeroOperacionDTO fallbackData = new CajeroOperacionDTO(
+                "Cajero Automático - MODO DEGRADADO",
+                "Servicio principal no disponible (Circuit Breaker Abierto)",
+                0.0,
+                intentosRestantes
+        );
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(fallbackData);
     }
 
-    // 2. Arquitectura Orientada a Eventos: Envío asíncrono de transacción (Patrón Saga)
+    // 2. Arquitectura de Eventos: Endpoint protegido con @Valid y DTO de entrada
     @PostMapping("/retiro")
-    public String procesarRetiroAsincrono(@RequestParam String cuentaId, @RequestParam Double monto) {
-        String eventoJson = String.format("{\"cuentaId\":\"%s\", \"monto\":%s, \"operacion\":\"RETIRO\"}", cuentaId, monto);
+    public ResponseEntity<TransaccionResponseDTO> procesarRetiroAsincrono(
+            @Valid @RequestBody RetiroRequestDTO request) {
         
-        // Publica el evento en Kafka. El BFF no espera a la base de datos.
+        // Control de límite de retiros
+        if (contadorRetiros.incrementAndGet() > LIMITE_RETIROS) {
+            throw new OperationLimitExceededException("Ha excedido el límite de " + LIMITE_RETIROS + " retiro diario permitido.");
+        }
+
+        String eventoJson = String.format("{\"cuentaId\":\"%s\", \"monto\":%s, \"operacion\":\"RETIRO\"}", 
+                request.cuentaId(), request.monto());
+
+        // Publica el evento en Kafka
         kafkaTemplate.send(TOPIC_RETIROS, eventoJson);
-        
-        return "Transacción en proceso. El retiro se confirmará asincrónicamente.";
+
+        TransaccionResponseDTO response = new TransaccionResponseDTO(
+                "Transacción en proceso. El retiro se confirmará asincrónicamente."
+        );
+        return ResponseEntity.ok(response);
     }
 }

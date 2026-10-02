@@ -1,17 +1,16 @@
 server:
   port: 8081
 spring:
-  application:
-    name: ms-core
   datasource:
     url: jdbc:mysql://localhost:3306/bancoxyz
     username: root
     password: admin
     driver-class-name: com.mysql.cj.jdbc.Driver
-    jpa:
-      hibernate:
-        ddl-auto: update 
-
+  jpa:
+    hibernate:
+      ddl-auto: update # Correccon de identacion
+  kafka:
+    bootstrap-servers: localhost:29092 # Kafka centralizado
 eureka:
   client:
     service-url:
