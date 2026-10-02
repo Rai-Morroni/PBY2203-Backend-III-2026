@@ -15,8 +15,7 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
-		<!-- Seguridad JWT -->
-		<!-- NO CONFIGURADA PARA EL BFF WEB AÚN
+		<!-- Seguridad JWT -->		
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
@@ -37,8 +36,7 @@
 			<artifactId>jjwt-jackson</artifactId>
 			<version>0.11.5</version>
 			<scope>runtime</scope>
-		</dependency>
-		-->
+		</dependency>		
 		<!-- Config Server y Eureka Client -->
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>
