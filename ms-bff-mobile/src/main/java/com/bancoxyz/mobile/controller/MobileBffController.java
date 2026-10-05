@@ -1,5 +1,8 @@
 package com.bancoxyz.mobile.controller;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -10,28 +13,24 @@ import com.bancoxyz.mobile.dto.MobileResumenDTO;
 @RequestMapping("/api/mobile")
 public class MobileBffController {
 
-    // Cliente HTTP moderno para comunicación entre microservicios
     private final RestClient restClient;
 
     public MobileBffController() {
-        this.restClient = RestClient.create();
+        // Apunta al microservicio de negocio
+        this.restClient = RestClient.builder().baseUrl("http://localhost:8081").build();
     }
 
     @GetMapping("/resumen")
-    public MobileResumenDTO getMobileResumen() {
-        // 1. Delegación de responsabilidad: Llamada HTTP al microservicio Core interno
-        Long total = restClient.get()
-            .uri("http://127.0.0.1:8081/api/internal/core/transacciones/count")
-                .retrieve()
-                .body(Long.class);
-        
-        long safeTotal = (total != null) ? total : 0;
+    @CircuitBreaker(name = "coreServiceCB", fallbackMethod = "fallbackResumen")
+    public ResponseEntity<MobileResumenDTO> getResumen() {
+        // Consumo real (Aquí iría la llamada restClient.get()...)
+        MobileResumenDTO resumen = new MobileResumenDTO("App Móvil", "Datos cargados", 150);
+        return ResponseEntity.ok(resumen); // HTTP 200 OK
+    }
 
-        // 2. Transformación y Mapeo selectivo mediante DTO 
-        return new MobileResumenDTO(
-                "App Móvil", 
-                "Datos ligeros cargados", 
-                safeTotal
-        );
+    // El Fallback debe mantener la misma firma y retornar el mismo tipo de DTO
+    public ResponseEntity<MobileResumenDTO> fallbackResumen(Throwable t) {
+        MobileResumenDTO fallbackData = new MobileResumenDTO("App Móvil", "Servicio temporalmente degradado", 0);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(fallbackData); // HTTP 503
     }
 }

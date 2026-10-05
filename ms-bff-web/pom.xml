@@ -15,8 +15,7 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
-		<!-- Seguridad JWT -->
-		<!-- NO CONFIGURADA PARA EL BFF WEB AÚN
+		<!-- Seguridad JWT -->		
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
@@ -38,7 +37,15 @@
 			<version>0.11.5</version>
 			<scope>runtime</scope>
 		</dependency>
-		-->
+		<!-- Tolerancia a Fallos: Resilience4j -->
+		<dependency>
+    		<groupId>org.springframework.cloud</groupId>
+    		<artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
+		</dependency>
+		<dependency>
+    		<groupId>org.springframework.boot</groupId>
+    		<artifactId>spring-boot-starter-aop</artifactId>
+		</dependency>
 		<!-- Config Server y Eureka Client -->
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>

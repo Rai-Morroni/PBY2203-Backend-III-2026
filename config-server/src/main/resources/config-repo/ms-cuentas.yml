@@ -1,0 +1,26 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: ms-cuentas
+  datasource:
+    url: jdbc:mysql://localhost:3306/bancoxyz
+    username: root
+    password: admin
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update # Correccon de identacion
+  kafka:
+    bootstrap-servers: localhost:29092 # Kafka centralizado
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+# Configuración de Resiliencia Interna para ms-cuentas
+resilience4j:
+  retry:
+    instances:
+      dbRetry:
+        maxAttempts: 3
+        waitDuration: 2000ms # Espera 2 segundos entre intentos

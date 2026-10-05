@@ -1,4 +1,4 @@
-package com.bancoxyz.cajero.config;
+package com.bancoxyz.mobile.config;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -21,8 +21,8 @@ public class SecurityConfig {
         http
             .csrf(csrf -> csrf.disable()) 
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/login", "/error").permitAll() // Login público y dispatch de errores
-                .requestMatchers("/api/cajero/**").hasRole("CAJERO")
+                .requestMatchers("/api/auth/login", "/error").permitAll() // Login público y dispatch de errores   
+                .requestMatchers("/api/mobile/**").hasRole("MOBILE")
                 .anyRequest().authenticated()
             )
             .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Sin estado (JWT)

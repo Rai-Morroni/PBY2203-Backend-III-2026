@@ -1,4 +1,4 @@
-package com.bancoxyz.cajero.config;
+package com.bancoxyz.mobile.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,12 +14,12 @@ public class UserDetailsConfig {
 
     @Bean
     public UserDetailsService userDetailsService(PasswordEncoder passwordEncoder) {
-        UserDetails userCajero = User.builder()
-            .username("cliente_cajero")
-            .password(passwordEncoder.encode("cajero123"))
-            .roles("CAJERO").build();
+        UserDetails userMobile = User.builder()
+            .username("cliente_movil")
+            .password(passwordEncoder.encode("movil123"))
+            .roles("MOBILE").build();
 
-        return new InMemoryUserDetailsManager(userCajero);
+        return new InMemoryUserDetailsManager(userMobile);
     }
 
     @Bean

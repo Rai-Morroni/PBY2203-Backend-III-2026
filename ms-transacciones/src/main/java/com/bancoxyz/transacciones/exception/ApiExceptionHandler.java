@@ -1,13 +1,11 @@
-package com.bancoxyz.cajero.exception;
+package com.bancoxyz.transacciones.exception;
 
-import java.util.HashMap;
 import java.util.Map;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -17,14 +15,5 @@ public class ApiExceptionHandler {
             OperationLimitExceededException exception) {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .body(Map.of("message", exception.getMessage()));
-    }
-
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-public ResponseEntity<Map<String, String>> handleValidationExceptions(MethodArgumentNotValidException ex) {
-    Map<String, String> errores = new HashMap<>();
-    ex.getBindingResult().getFieldErrors().forEach(error -> 
-        errores.put(error.getField(), error.getDefaultMessage())
-    );
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errores);
     }
 }
