@@ -8,6 +8,13 @@ server:
 spring:
   kafka:
     bootstrap-servers: localhost:29092 # Kafka centralizado para el productor
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AUTH_SERVER_ISSUER:http://localhost:9000}
+bank:
+  auth-server-base-url: ${AUTH_SERVER_URL:http://localhost:9000}
 eureka:
   client:
     service-url:

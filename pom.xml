@@ -15,7 +15,6 @@
 	<version>0.0.1-SNAPSHOT</version>
 	<name>bank-batch-legacy</name>
 	
-	<!-- ESTO ES LO NUEVO E IMPORTANTE -->
 	<packaging>pom</packaging>
 
 	<modules>
@@ -26,6 +25,7 @@
 		<module>ms-bff-cajero</module>
 		<module>ms-bff-web</module>
 		<module>ms-bff-mobile</module>
+		<module>auth-server</module>
 	</modules>
 
 	<properties>

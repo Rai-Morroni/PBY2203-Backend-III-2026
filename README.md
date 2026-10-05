@@ -1,6 +1,6 @@
 # Bank XYZ - Backend distribuido
 
-Backend Java 21/Spring Boot 3.4.1 organizado como un reactor Maven con Config Server, Eureka, un servicio Core y tres BFF independientes. Se incluyen consultas síncronas al Core, seguridad JWT en el BFF Cajero y un flujo de retiros publicado en Kafka.
+Backend Java 21/Spring Boot 3.4.1 organizado como un reactor Maven con Config Server, Eureka, un servicio Core, un Authorization Server y tres BFF independientes. Spring Authorization Server centraliza la emisión de JWT; los BFF los validan como OAuth 2.0 Resource Servers.
 
 > Este README describe el estado actual del proyecto. En particular, el consumidor Kafka todavía no persiste el retiro en MySQL.
 
@@ -9,6 +9,7 @@ Backend Java 21/Spring Boot 3.4.1 organizado como un reactor Maven con Config Se
 - Evolucionar la solución legacy hacia servicios Spring Boot independientes, con límites claros entre Core y los canales cliente.
 - Adaptar las respuestas del backend a las necesidades de Web, Mobile y Cajero mediante BFFs separados.
 - Centralizar la configuración de ejecución y habilitar descubrimiento de servicios con Spring Cloud Config y Eureka.
+- Centralizar usuarios y emisión de tokens JWT en `auth-server` con Spring Authorization Server.
 - Aplicar HTTPS y autenticación JWT al canal Cajero, y proteger las operaciones críticas con respuestas de error explícitas.
 - Demostrar comunicación asíncrona con Kafka para el retiro de Cajero y documentar las piezas necesarias para completar su consistencia transaccional.
 
@@ -26,8 +27,9 @@ En la implementación actual solo está resuelto el envío y consumo del evento.
 |---|---:|---|
 | `config-server` | 8888 | Publica configuración desde el repositorio nativo incluido en el classpath. |
 | `eureka-server` | 8761 | Registro y descubrimiento de servicios. No se registra a sí mismo. |
+| `auth-server` | 9000 HTTP | Emite JWT, publica metadatos OIDC/JWKS y autentica usuarios. |
 | `ms-core` | 8081 HTTP | Endpoints internos, entidades/repositorios JPA y consumidor Kafka. |
-| `ms-bff-cajero` | 8443 HTTPS | Login/JWT, consulta de saldo con Circuit Breaker y publicación asíncrona de retiros. También abre un conector HTTP local en `127.0.0.1:8080`. |
+| `ms-bff-cajero` | 8443 HTTPS | Proxy del login al Authorization Server, consulta de saldo con Circuit Breaker y publicación asíncrona de retiros. También abre un conector HTTP local en `127.0.0.1:8080`. |
 | `ms-bff-mobile` | 8444 HTTPS | Resumen móvil con conteo de transacciones del Core. |
 | `ms-bff-web` | 8445 HTTPS | Dashboard web con historial del Core y DTO propio del BFF. |
 
@@ -49,6 +51,9 @@ Los BFF Web, Mobile y Cajero tienen clientes Eureka y Config Server. Las llamada
 ├── eureka-server/
 │   ├── pom.xml
 │   └── src/main/java/com/bancoxyz/eureka/EurekaServerApplication.java
+├── auth-server/
+│   ├── pom.xml
+│   └── src/main/java/com/bancoxyz/auth/ # Usuarios, clientes OAuth2, emisión JWT y JWKS
 ├── ms-core/
 │   ├── pom.xml
 │   └── src/main/
@@ -112,6 +117,7 @@ Inicia cada comando en una terminal separada, en este orden recomendado:
 ```powershell
 .\mvnw.cmd -pl config-server spring-boot:run
 .\mvnw.cmd -pl eureka-server spring-boot:run
+.\mvnw.cmd -pl auth-server spring-boot:run
 .\mvnw.cmd -pl ms-core spring-boot:run
 .\mvnw.cmd -pl ms-bff-cajero spring-boot:run
 .\mvnw.cmd -pl ms-bff-web spring-boot:run
@@ -143,6 +149,7 @@ Los BFF importan Config Server como opcional (`optional:configserver:`), por lo 
 |---|---|
 | Config Server | `src/main/resources/application.yml`; perfil `native`, puerto 8888, búsqueda en `classpath:/config-repo/`. |
 | Eureka | `src/main/resources/application.yml`; puerto 8761, `register-with-eureka=false` y `fetch-registry=false`. |
+| Auth Server | Puerto 9000; issuer `http://localhost:9000`; claves RSA publicadas por JWKS. Configura `AUTH_SERVER_ISSUER` para cambiar el issuer y `AUTH_SERVER_URL` para la URL de login usada por Cajero. |
 | Core | Puerto 8081; MySQL `bancoxyz`; Kafka `localhost:29092`; registro en Eureka. |
 | BFF Cajero | HTTPS 8443 con `keystore.p12`, alias `bancoxyz`; Kafka `localhost:29092`; Eureka; conector HTTP adicional en loopback 8080. |
 | BFF Web | HTTPS 8445 con el keystore local; Eureka y Config Server opcional. |
@@ -156,7 +163,8 @@ Los archivos `ms-core.yml` y `ms-bff-*.yml` están en `config-server/src/main/re
 
 | Servicio | Método y ruta | Descripción |
 |---|---|---|
-| Cajero | `POST /api/auth/login` | Valida credenciales locales y entrega `{ "token": "..." }`. |
+| Auth Server | `POST /api/auth/login` | Autentica un usuario central y entrega un Bearer JWT firmado por RSA (`access_token`, `token_type`, `expires_in`). |
+| Cajero | `POST /api/auth/login` | Proxy compatible al Auth Server; devuelve `{ "token": "..." }`. |
 | Cajero | `GET /api/cajero/saldo` | Consulta saldo a Core; Circuit Breaker devuelve un fallback fijo si falla la llamada. |
 | Cajero | `POST /api/cajero/retiro?cuentaId=123&monto=50000` | Publica el evento de retiro y responde sin esperar al consumidor. |
 | Web | `GET /api/web/dashboard` | Obtiene historial del Core y lo transforma a `WebDashboardDTO`. |
@@ -167,24 +175,24 @@ Los archivos `ms-core.yml` y `ms-bff-*.yml` están en `config-server/src/main/re
 
 El Core escucha el tópico `cajero-retiros-topic`. Los endpoints Core usan HTTP en el puerto 8081; los BFF cliente usan HTTPS y el certificado local, por lo que `curl.exe` suele necesitar `-k` durante pruebas locales.
 
-## Autenticación actual
+## Autenticación OAuth 2.0
 
-El login JWT vive en `ms-bff-cajero` y sus usuarios de prueba están en memoria:
+`auth-server` centraliza los usuarios (en memoria para este ejemplo) y el cliente público OAuth2 `bancoxyz-client`. El cliente registrado usa Authorization Code + PKCE y OpenID Connect; el endpoint de login conserva el flujo simple que usaba el cliente Cajero y devuelve el token en formato Bearer. Los tokens se firman con RSA y el servidor publica las claves públicas en `/oauth2/jwks`; los tres BFF validan firma, expiración e issuer mediante `spring-boot-starter-oauth2-resource-server`.
+
+Usuarios de demostración (cambiar las contraseñas y almacenamiento para producción):
 
 | Usuario | Contraseña | Rol |
 |---|---|---|
-| `cliente_web` | `web123` | `WEB` |
-| `cliente_movil` | `movil123` | `MOBILE` |
-| `cliente_cajero` | `cajero123` | `CAJERO` |
+| `cliente_web` | `web123` | `ROLE_WEB` |
+| `cliente_movil` | `movil123` | `ROLE_MOBILE` |
+| `cliente_cajero` | `cajero123` | `ROLE_CAJERO` |
 
-El token usa HS256 y expira en 15 minutos. La cadena de seguridad del BFF Cajero exige `ROLE_CAJERO` (rol `CAJERO`) para `/api/cajero/**`; el login y `/error` son públicos. La clave de firma está fija en el código y solo es apta para desarrollo.
-
-De acuerdo con los requerimientos y el estado actual del proyecto, los POM de Web y Mobile no incluyen Spring Security/JWT (sus dependencias JWT están comentadas). Por lo tanto, esos dos BFF no validan los tokens ni aplican los roles `WEB`/`MOBILE` actualmente. Core tampoco configura autenticación para `/api/internal/core/**`; considéralo una API de red interna, no una frontera de seguridad pública.
+El endpoint de login del servidor central es `POST http://localhost:9000/api/auth/login`; Cajero también conserva `POST https://localhost:8443/api/auth/login` como proxy. Los BFF exigen `ROLE_CAJERO`, `ROLE_WEB` o `ROLE_MOBILE` en sus endpoints de canal. La clave RSA se genera en memoria al iniciar: los tokens dejan de ser válidos al reiniciar el Auth Server; usa claves persistentes gestionadas de forma segura en despliegues estables. Core sigue sin autenticar `/api/internal/core/**`; considéralo una API de red interna, no una frontera de seguridad pública.
 
 Ejemplo para obtener un token de Cajero:
 
 ```http
-POST https://localhost:8443/api/auth/login
+POST http://localhost:9000/api/auth/login
 Content-Type: application/json
 
 {"username":"cliente_cajero","password":"cajero123"}
@@ -224,4 +232,3 @@ El mensaje JSON publicado tiene esta forma:
 - El retiro solo publica el evento Kafka; todavía no modifica `saldos_intereses`.
 - Los tres BFF llaman a Core mediante URLs locales fijas, no mediante un cliente balanceado Eureka.
 - `docker-compose.yml` no contiene MySQL; se necesita una instancia externa y la base `bancoxyz`.
-

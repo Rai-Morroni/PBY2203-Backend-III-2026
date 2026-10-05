@@ -17,13 +17,17 @@ start "Eureka Server" cmd /k "cd eureka-server && ..\mvnw spring-boot:run"
 :: Esperamos 15 segundos para que Eureka este listo para recibir registros
 timeout /t 15 /nobreak > NUL
 
-echo 4. Levantando Microservicios de Dominio...
+echo 4. Levantando Authorization Server (Puerto 9000)...
+start "Auth Server" cmd /k "cd auth-server && ..\mvnw spring-boot:run"
+timeout /t 10 /nobreak > NUL
+
+echo 5. Levantando Microservicios de Dominio...
 start "MS-Cuentas" cmd /k "cd ms-cuentas && ..\mvnw spring-boot:run"
 start "MS-Transacciones" cmd /k "cd ms-transacciones && ..\mvnw spring-boot:run"
 :: Esperamos 15 segundos para que los dominios se conecten a BD y se registren en Eureka
 timeout /t 15 /nobreak > NUL
 
-echo 5. Levantando Gateways BFF...
+echo 6. Levantando Gateways BFF...
 start "BFF Cajero" cmd /k "cd ms-bff-cajero && ..\mvnw spring-boot:run"
 start "BFF Mobile" cmd /k "cd ms-bff-mobile && ..\mvnw spring-boot:run"
 start "BFF Web" cmd /k "cd ms-bff-web && ..\mvnw spring-boot:run"
