@@ -22,15 +22,15 @@ public class WebBffController {
 
     public WebBffController() {
         // Se apunta a la URL base del microservicio interno
-        this.restClient = RestClient.builder().baseUrl("http://localhost:8081").build();
+        this.restClient = RestClient.builder().baseUrl("http://localhost:8082").build();
     }
 
     @GetMapping("/dashboard")
-    @CircuitBreaker(name = "coreServiceCB", fallbackMethod = "fallbackDashboard")
+    @CircuitBreaker(name = "transaccionesServiceCB", fallbackMethod = "fallbackDashboard")
     public ResponseEntity<WebDashboardDTO> getWebDashboard() {
         // Comunicación HTTP síncrona hacia la capa interna/microservicio
         List<CuentaAnualDTO> historial = restClient.get()
-                .uri("/api/internal/core/historial")
+                .uri("/api/internal/transacciones/historial")
                 .retrieve()
                 .body(new ParameterizedTypeReference<List<CuentaAnualDTO>>() {});
 

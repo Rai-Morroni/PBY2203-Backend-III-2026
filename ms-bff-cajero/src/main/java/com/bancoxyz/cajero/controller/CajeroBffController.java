@@ -42,7 +42,7 @@ public class CajeroBffController {
 
     // 1. Tolerancia a Fallos: Circuit Breaker y contrato DTO
     @GetMapping("/saldo")
-    @CircuitBreaker(name = "coreServiceCB", fallbackMethod = "fallbackSaldo")
+    @CircuitBreaker(name = "cuentasServiceCB", fallbackMethod = "fallbackSaldo")
     public ResponseEntity<CajeroOperacionDTO> consultarSaldoSeguro() {
         
         // Control de límite de consultas
@@ -51,7 +51,7 @@ public class CajeroBffController {
         }
 
         Double saldo = restClient.get()
-                .uri("/api/internal/core/saldo")
+                .uri("/api/internal/cuentas/saldo")
                 .retrieve()
                 .body(Double.class);
 
