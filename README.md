@@ -1,227 +1,240 @@
-# Bank XYZ - Backend distribuido
+# Banco XYZ - Backend distribuido
 
-Backend Java 21/Spring Boot 3.4.1 organizado como un reactor Maven con Config Server, Eureka, un servicio Core y tres BFF independientes. Se incluyen consultas síncronas al Core, seguridad JWT en el BFF Cajero y un flujo de retiros publicado en Kafka.
+Proyecto Java 21 y Spring Boot 3.4.1, organizado como un reactor Maven de microservicios. Incluye configuración centralizada, descubrimiento Eureka, emisión de JWT, tres BFF de canal, dos servicios de dominio, MySQL, carga CSV y un flujo de eventos Kafka para retiros.
 
-> Este README describe el estado actual del proyecto. En particular, el consumidor Kafka todavía no persiste el retiro en MySQL.
-
-## Objetivos del proyecto
-
-- Evolucionar la solución legacy hacia servicios Spring Boot independientes, con límites claros entre Core y los canales cliente.
-- Adaptar las respuestas del backend a las necesidades de Web, Mobile y Cajero mediante BFFs separados.
-- Centralizar la configuración de ejecución y habilitar descubrimiento de servicios con Spring Cloud Config y Eureka.
-- Aplicar HTTPS y autenticación JWT al canal Cajero, y proteger las operaciones críticas con respuestas de error explícitas.
-- Demostrar comunicación asíncrona con Kafka para el retiro de Cajero y documentar las piezas necesarias para completar su consistencia transaccional.
-
-## Justificación del patrón Saga
-
-Un retiro involucra al menos dos contextos desplegables: el BFF Cajero recibe la solicitud y el Core es responsable del saldo persistido. Mantener la llamada HTTP abierta hasta que Core procese la operación acoplaría la disponibilidad del canal a la del servicio de datos. La Saga por **coreografía** permite que cada participante reaccione a eventos sin un coordinador central: Cajero publica el retiro en Kafka y Core consume el evento de manera asíncrona.
-
-Se elige coreografía para este flujo pequeño porque reduce el acoplamiento temporal y permite que BFF y Core escalen y fallen de forma más independiente. A cambio, el estado es eventualmente consistente y la lógica del proceso queda distribuida entre productores y consumidores; por eso deben definirse eventos de resultado, reintentos, idempotencia y compensaciones antes de usar el flujo para movimientos financieros reales.
-
-En la implementación actual solo está resuelto el envío y consumo del evento. El listener todavía no actualiza el saldo ni publica confirmación o rechazo; el ejemplo es una base demostrativa de Saga, no una transacción distribuida completa.
+> Proyecto de demostración académica. Las credenciales, contraseñas, claves TLS y configuración de seguridad son solo para desarrollo.
 
 ## Arquitectura
 
-| Módulo | Puerto | Responsabilidad |
+| Servicio | Puerto publicado | Funcionalidad |
 |---|---:|---|
-| `config-server` | 8888 | Publica configuración desde el repositorio nativo incluido en el classpath. |
-| `eureka-server` | 8761 | Registro y descubrimiento de servicios. No se registra a sí mismo. |
-| `ms-core` | 8081 HTTP | Endpoints internos, entidades/repositorios JPA y consumidor Kafka. |
-| `ms-bff-cajero` | 8443 HTTPS | Login/JWT, consulta de saldo con Circuit Breaker y publicación asíncrona de retiros. También abre un conector HTTP local en `127.0.0.1:8080`. |
-| `ms-bff-mobile` | 8444 HTTPS | Resumen móvil con conteo de transacciones del Core. |
-| `ms-bff-web` | 8445 HTTPS | Dashboard web con historial del Core y DTO propio del BFF. |
+| `config-server` | 8888 HTTP | Publica configuración desde `config-server/src/main/resources/config-repo/`. |
+| `eureka-server` | 8761 HTTP | Registro y descubrimiento de servicios. |
+| `auth-server` | 9000 HTTP | Autentica usuarios de demostración, emite JWT RSA y publica metadatos OIDC/JWKS. |
+| `mysql-db` | 3306 | Base MySQL `bancoxyz`. |
+| `mysql-seed` | — | Contenedor de una sola ejecución que recrea las tablas de carga e importa los CSV. |
+| `kafka` | 29092 desde el host; 9092 en Docker | Broker Kafka 3.7.0 con KRaft. |
+| `ms-cuentas` | 8081 HTTP | Endpoint interno de consulta de saldo y acceso JPA. |
+| `ms-transacciones` | 8082 HTTP | Historial, conteo de transacciones y consumidor de eventos de retiro. |
+| `ms-bff-cajero` | 8443 HTTPS | Proxy de login, consulta de saldo y publicación asíncrona de retiros. |
+| `ms-bff-mobile` | 8444 HTTPS | Endpoint de resumen móvil. Actualmente entrega datos fijos de demostración. |
+| `ms-bff-web` | 8445 HTTPS | Dashboard web e historial formateado para el canal. |
 
-Los BFF Web, Mobile y Cajero tienen clientes Eureka y Config Server. Las llamadas actuales a Core usan URLs directas a `localhost:8081`; no están usando balanceo de carga de Eureka.
+Los servicios se conectan entre sí mediante los nombres DNS de Compose (`mysql-db`, `kafka`, `auth-server`, `ms-cuentas`, `ms-transacciones`, etc.). Las llamadas BFF→dominio no usan balanceo de carga Eureka.
 
-## Estructura
+## Tecnologías
 
-```text
-.
-├── pom.xml                         # Agregador Maven (packaging pom)
-├── docker-compose.yml              # Kafka; MySQL se ejecuta por separado
-├── config-server/
-│   ├── pom.xml
-│   └── src/main/
-│       ├── java/com/bancoxyz/config/ConfigServerApplication.java
-│       └── resources/
-│           ├── application.yml
-│           └── config-repo/         # ms-core.yml y ms-bff-*.yml
-├── eureka-server/
-│   ├── pom.xml
-│   └── src/main/java/com/bancoxyz/eureka/EurekaServerApplication.java
-├── ms-core/
-│   ├── pom.xml
-│   └── src/main/
-│       ├── java/com/bancoxyz/core/
-│       │   ├── controller/          # API interna
-│       │   ├── listener/            # Consumidor de retiros Kafka
-│       │   ├── model/               # Entidades JPA
-│       │   └── repository/          # Repositorios Spring Data
-│       └── resources/application.yml
-├── ms-bff-cajero/
-│   ├── pom.xml
-│   └── src/main/java/com/bancoxyz/cajero/
-│       ├── config/                  # JWT, seguridad y conector HTTP local
-│       ├── controller/              # Login y operaciones de cajero
-│       ├── dto/
-│       └── exception/               # Errores REST, incluido límite de intentos
-├── ms-bff-web/
-│   ├── pom.xml
-│   └── src/main/java/com/bancoxyz/web/
-│       ├── controller/
-│       └── dto/                     # DTOs web; no importa entidades de Core
-└── ms-bff-mobile/
-    ├── pom.xml
-    └── src/main/java/com/bancoxyz/mobile/{controller,dto}/
-```
+- Java 21, Spring Boot 3.4.1 y Maven.
+- Spring Cloud Config y Netflix Eureka.
+- Spring Authorization Server y OAuth2 Resource Server.
+- MySQL 8, Spring Data JPA e Hibernate.
+- Apache Kafka 3.7.0.
+- Resilience4j para tolerancia a fallos en consultas seleccionadas.
+- Docker Compose para la ejecución integrada.
 
-Cada servicio tiene su propio `pom.xml` y `src/main/resources/application.yml`. El Config Server usa `config-repo/` con archivos nombrados por `spring.application.name`.
+## Requisitos
 
-## Requisitos y dependencias
+- Docker Desktop con Docker Compose.
+- JDK 21 y el Maven Wrapper (`mvnw.cmd`, incluido) para compilar las imágenes.
 
-- JDK 21.
-- Docker con Docker Compose para Kafka.
-- MySQL accesible en `localhost:3306`, con una base llamada `bancoxyz`.
-- El repositorio incluye `mvnw` y `mvnw.cmd`; no hace falta instalar Maven globalmente.
+## Inicio principal: `iniciar_proyecto.bat`
 
-El `docker-compose.yml` solo levanta Kafka, no MySQL. La configuración actual de desarrollo usa `root` / `admin`; adapta usuario y contraseña a tu instalación antes de iniciar Core.
-
-```sql
-CREATE DATABASE bancoxyz;
-```
-
-## Compilar y ejecutar
-
-Desde la raíz del repositorio, valida o compila todo el reactor:
-
-```powershell
-.\mvnw.cmd validate
-.\mvnw.cmd -DskipTests compile
-```
-
-Inicia Kafka y MySQL:
-
-```powershell
-docker compose up -d kafka
-```
-
-Kafka publica `localhost:29092` para clientes que corren en el host; dentro de la red Docker, su listener es `kafka:9092`.
-
-Inicia cada comando en una terminal separada, en este orden recomendado:
-
-```powershell
-.\mvnw.cmd -pl config-server spring-boot:run
-.\mvnw.cmd -pl eureka-server spring-boot:run
-.\mvnw.cmd -pl ms-core spring-boot:run
-.\mvnw.cmd -pl ms-bff-cajero spring-boot:run
-.\mvnw.cmd -pl ms-bff-web spring-boot:run
-.\mvnw.cmd -pl ms-bff-mobile spring-boot:run
-```
-
-### Inicio automatizado en Windows
-
-Desde la raíz del repositorio, ejecuta el script incluido:
+En Windows, inicia Docker Desktop y ejecuta `iniciar_proyecto.bat` desde el Explorador o desde PowerShell en la raíz del repositorio:
 
 ```powershell
 .\iniciar_proyecto.bat
 ```
 
-También puedes abrir `iniciar_proyecto.bat` desde el Explorador de archivos. El script ejecuta `docker compose up -d`, espera unos segundos y abre ventanas de consola para Config Server, Eureka, Core y los tres BFF. Al final deja la ventana inicial en pausa; revisa las consolas nuevas para confirmar que cada servicio inició correctamente.
+El script comprueba que Docker esté disponible, empaqueta los módulos como JAR ejecutables con `mvnw.cmd clean package -DskipTests`, construye las imágenes y levanta **todo el stack exclusivamente con Docker Compose**. No lanza instancias adicionales de Spring con Maven, por lo que evita duplicar procesos y puertos. También comprueba que los microservicios continúen ejecutándose y muestra sus logs recientes si alguno se detiene durante el inicio.
 
-Requisitos antes de ejecutarlo:
+La carga inicial de MySQL desde los CSV es intencional para esta demo: cada ejecución del script vuelve a crear y poblar las tres tablas base. Los datos generados durante una demostración no se conservan al reiniciar el proyecto.
 
-- Docker Desktop debe estar iniciado y el comando `docker compose` disponible.
-- JDK 21 debe estar instalado y configurado.
-- MySQL debe estar activo en `localhost:3306` y la base `bancoxyz` debe existir.
+`mysql-seed` espera a que MySQL esté saludable y termina con código `0` después de cargar los archivos. `ms-cuentas` y `ms-transacciones` esperan a que esa carga finalice.
 
+Para consultar la carga:
 
-Los BFF importan Config Server como opcional (`optional:configserver:`), por lo que pueden iniciar con la configuración local si Config Server aún no está disponible. El registro en Eureka sí requiere que Eureka esté levantado.
+```powershell
+docker exec -it mysql-db mysql -u root -padmin -e "USE bancoxyz; SELECT COUNT(*) AS intereses FROM interes_entity; SELECT COUNT(*) AS cuentas_anuales FROM cuenta_anual_entity; SELECT COUNT(*) AS transacciones FROM transaccion_entity;"
+```
 
-## Configuración
+Cada tabla de carga debería contener 1.000 filas. Ejecutar de nuevo el script o `mysql-seed` **elimina y recrea** `interes_entity`, `cuenta_anual_entity` y `transaccion_entity`, y vuelve a cargar los CSV; ese reinicio es el comportamiento esperado para las demostraciones.
 
-| Servicio | Configuración destacada |
-|---|---|
-| Config Server | `src/main/resources/application.yml`; perfil `native`, puerto 8888, búsqueda en `classpath:/config-repo/`. |
-| Eureka | `src/main/resources/application.yml`; puerto 8761, `register-with-eureka=false` y `fetch-registry=false`. |
-| Core | Puerto 8081; MySQL `bancoxyz`; Kafka `localhost:29092`; registro en Eureka. |
-| BFF Cajero | HTTPS 8443 con `keystore.p12`, alias `bancoxyz`; Kafka `localhost:29092`; Eureka; conector HTTP adicional en loopback 8080. |
-| BFF Web | HTTPS 8445 con el keystore local; Eureka y Config Server opcional. |
-| BFF Mobile | HTTPS 8444 con el keystore local; Eureka y Config Server opcional. |
+Para repetir la importación manualmente:
 
-Los archivos `ms-core.yml` y `ms-bff-*.yml` están en `config-server/src/main/resources/config-repo/`. El keystore está dentro de `src/main/resources` de cada BFF HTTPS. Las contraseñas del keystore y de MySQL incluidas en los YAML son valores de desarrollo: no las uses en producción.
+```powershell
+docker compose up -d mysql-seed
+docker compose wait mysql-seed
+```
 
-**Nota de configuración Core:** en el `ms-core.yml` actual, `hibernate.ddl-auto` está indentado bajo `spring.datasource` en vez de bajo `spring.jpa`. Por ello, `spring.jpa.hibernate.ddl-auto=update` no se está aplicando desde esa configuración centralizada; revisa la indentación si esperas que Hibernate cree/actualice tablas.
+Para revisar servicios y logs:
 
-## APIs
+```powershell
+docker compose ps -a
+docker compose logs --tail 100 mysql-db mysql-seed
+docker compose logs --tail 100 auth-server ms-cuentas ms-transacciones ms-bff-cajero ms-bff-web ms-bff-mobile
+```
 
-| Servicio | Método y ruta | Descripción |
-|---|---|---|
-| Cajero | `POST /api/auth/login` | Valida credenciales locales y entrega `{ "token": "..." }`. |
-| Cajero | `GET /api/cajero/saldo` | Consulta saldo a Core; Circuit Breaker devuelve un fallback fijo si falla la llamada. |
-| Cajero | `POST /api/cajero/retiro?cuentaId=123&monto=50000` | Publica el evento de retiro y responde sin esperar al consumidor. |
-| Web | `GET /api/web/dashboard` | Obtiene historial del Core y lo transforma a `WebDashboardDTO`. |
-| Mobile | `GET /api/mobile/resumen` | Obtiene del Core el conteo de transacciones. |
-| Core | `GET /api/internal/core/saldo` | Saldo final de intereses, o `0.0` si no hay registros. |
-| Core | `GET /api/internal/core/historial` | Lista de cuentas anuales. |
-| Core | `GET /api/internal/core/transacciones/count` | Cantidad de transacciones. |
+Para detener los servicios:
 
-El Core escucha el tópico `cajero-retiros-topic`. Los endpoints Core usan HTTP en el puerto 8081; los BFF cliente usan HTTPS y el certificado local, por lo que `curl.exe` suele necesitar `-k` durante pruebas locales.
+```powershell
+docker compose down
+```
 
-## Autenticación actual
+No se declara un volumen con nombre para persistir MySQL. Independientemente de los detalles de almacenamiento del contenedor, al iniciar la demo se vuelven a cargar las tres tablas con los CSV para recuperar el estado base.
 
-El login JWT vive en `ms-bff-cajero` y sus usuarios de prueba están en memoria:
+## Alternativas de ejecución
+
+El `.bat` es el método recomendado para la ejecución. Usa una de estas alternativas solo si necesitas controlar Docker Compose o ejecutar las aplicaciones directamente desde Maven. 
+
+### Alternativa A: Docker Compose manual
+
+Primero empaqueta los JAR y luego construye e inicia el stack:
+
+```powershell
+.\mvnw.cmd clean package -DskipTests
+docker compose up -d --build
+docker compose ps -a
+```
+
+Compose espera a MySQL y a la carga CSV antes de arrancar los dos servicios de dominio.
+
+### Alternativa B: infraestructura en Docker y aplicaciones con Maven
+
+Inicia solo MySQL, el seeder y Kafka en Docker:
+
+```powershell
+docker compose up -d mysql-seed kafka
+```
+
+Luego inicia cada servicio de aplicación en una terminal separada:
+
+```powershell
+.\mvnw.cmd -pl config-server spring-boot:run
+.\mvnw.cmd -pl eureka-server spring-boot:run
+.\mvnw.cmd -pl auth-server spring-boot:run
+.\mvnw.cmd -pl ms-cuentas spring-boot:run
+.\mvnw.cmd -pl ms-transacciones spring-boot:run
+.\mvnw.cmd -pl ms-bff-cajero spring-boot:run
+.\mvnw.cmd -pl ms-bff-web spring-boot:run
+.\mvnw.cmd -pl ms-bff-mobile spring-boot:run
+```
+
+La configuración local usa MySQL en `localhost:3306` y Kafka en `localhost:29092`.
+
+## Carga de datos y estado de persistencia
+
+Los archivos de entrada están en `var/lib/mysql-files/`:
+
+- `intereses.csv`
+- `cuentas_anuales.csv`
+- `transacciones.csv`
+
+El script `sql/init.sql` carga esas columnas y sus destinos de staging dentro de MySQL:
+
+| CSV | Tabla de carga | Filas esperadas |
+|---|---|---:|
+| `intereses.csv` | `interes_entity` | 1.000 |
+| `cuentas_anuales.csv` | `cuenta_anual_entity` | 1.000 |
+| `transacciones.csv` | `transaccion_entity` | 1.000 |
+
+En el CSV de transacciones hay 55 fechas con mes `13`. Esas filas se conservan, pero su columna `fecha` se carga como `NULL`.
+
+**Inconsistencia pendiente en intereses:** `ms-cuentas` tiene su entidad JPA asociada a `saldos_intereses`, mientras que el seeder importa el CSV en `interes_entity`. Hibernate puede crear `saldos_intereses` como otra tabla; el endpoint de saldo consulta esa tabla y no los datos importados en `interes_entity`. Por lo tanto, que `interes_entity` tenga 1.000 filas no implica que el saldo consumido por Cajero tenga datos.
+
+`ms-transacciones` sí mapea `cuenta_anual_entity` y `transaccion_entity`, las tablas de carga correspondientes.
+
+## Configuración y seguridad
+
+- Config Server lee archivos con nombres correspondientes a `spring.application.name`, por ejemplo `auth-server.yml` y `ms-bff-web.yml`.
+- Los BFF exponen HTTPS con certificados de desarrollo `keystore.p12`. `curl.exe` necesita `-k` para aceptarlos localmente.
+- Las URLs entre contenedores y el issuer JWT se configuran con variables en `docker-compose.yml`.
+- La clave RSA del Auth Server se genera en memoria al iniciar. Al reiniciarlo, los JWT anteriores dejan de validar.
+- Usuarios y clientes OAuth2 se mantienen en memoria; no son almacenamiento persistente.
+- MySQL usa `root` / `admin` para desarrollo. No son credenciales apropiadas para producción.
+- Las APIs `/api/internal/**` de los servicios de dominio no tienen autenticación propia y deben considerarse internas.
+
+### Usuarios de demostración
 
 | Usuario | Contraseña | Rol |
 |---|---|---|
-| `cliente_web` | `web123` | `WEB` |
-| `cliente_movil` | `movil123` | `MOBILE` |
-| `cliente_cajero` | `cajero123` | `CAJERO` |
+| `cliente_cajero` | `cajero123` | `ROLE_CAJERO` |
+| `cliente_web` | `web123` | `ROLE_WEB` |
+| `cliente_movil` | `movil123` | `ROLE_MOBILE` |
 
-El token usa HS256 y expira en 15 minutos. La cadena de seguridad del BFF Cajero exige `ROLE_CAJERO` (rol `CAJERO`) para `/api/cajero/**`; el login y `/error` son públicos. La clave de firma está fija en el código y solo es apta para desarrollo.
+El servidor registra el cliente público `bancoxyz-client` con Authorization Code + PKCE y OpenID Connect. Para las pruebas de los BFF, el proyecto además expone el endpoint de compatibilidad `POST /api/auth/login`, que autentica el usuario y emite un JWT firmado con RSA. El BFF Cajero expone un proxy del mismo login.
 
-De acuerdo con los requerimientos y el estado actual del proyecto, los POM de Web y Mobile no incluyen Spring Security/JWT (sus dependencias JWT están comentadas). Por lo tanto, esos dos BFF no validan los tokens ni aplican los roles `WEB`/`MOBILE` actualmente. Core tampoco configura autenticación para `/api/internal/core/**`; considéralo una API de red interna, no una frontera de seguridad pública.
+## APIs disponibles
 
-Ejemplo para obtener un token de Cajero:
+| Servicio | Método y ruta | Autorización / resultado |
+|---|---|---|
+| Auth Server | `POST http://localhost:9000/api/auth/login` | Público. Devuelve `access_token`, `token`, `token_type` y `expires_in`. |
+| Auth Server | `GET /.well-known/openid-configuration` | Metadatos OIDC. |
+| Auth Server | `GET /oauth2/jwks` | Claves públicas para verificar JWT. |
+| BFF Cajero | `POST https://localhost:8443/api/auth/login` | Público; proxy y respuesta compatible `{ "token": "..." }`. |
+| BFF Cajero | `GET /api/cajero/saldo` | Requiere `ROLE_CAJERO`; consulta `ms-cuentas`. |
+| BFF Cajero | `POST /api/cajero/retiro` | Requiere `ROLE_CAJERO`; valida el cuerpo y publica un evento Kafka. |
+| BFF Web | `GET https://localhost:8445/api/web/dashboard` | Requiere `ROLE_WEB`; devuelve dashboard e historial. |
+| BFF Mobile | `GET https://localhost:8444/api/mobile/resumen` | Requiere `ROLE_MOBILE`; devuelve un resumen de demostración. |
+| `ms-cuentas` | `GET http://localhost:8081/api/internal/cuentas/saldo` | Interno; consulta `saldos_intereses`. |
+| `ms-transacciones` | `GET http://localhost:8082/api/internal/transacciones/historial` | Interno; devuelve cuentas anuales. |
+| `ms-transacciones` | `GET http://localhost:8082/api/internal/transacciones/transacciones/count` | Interno; cuenta las filas de `transaccion_entity`. |
 
-```http
-POST https://localhost:8443/api/auth/login
-Content-Type: application/json
-
-{"username":"cliente_cajero","password":"cajero123"}
-```
-
-
-## Saga por coreografía: retiro de Cajero
-
-El BFF Cajero actúa como productor, Kafka desacopla la solicitud y Core consume el evento. No hay un orquestador central. El tramo hasta el consumidor está implementado; la escritura del saldo que muestra la imagen de referencia todavía no existe en `CoreEventConsumer`.
-
-```mermaid
-flowchart TD
-    CLIENTE["Cliente Cajero"] -->|"POST /api/cajero/retiro?cuentaId=123&monto=50000"| BFF["ms-bff-cajero<br/>Productor"]
-    BFF -->|"KafkaTemplate.send()"| TOPIC[("Apache Kafka<br/>cajero-retiros-topic")]
-    TOPIC -->|"@KafkaListener<br/>groupId: core-group"| CORE["ms-core<br/>CoreEventConsumer"]
-    CORE -->|"Implementado: imprime evento recibido"| LOG["Log de aplicación<br/>sin confirmación persistida"]
-    CORE -.->|"Pendiente: UPDATE saldo_final = saldo_final - monto"| DB[("MySQL<br/>saldos_intereses")]
-
-    classDef implemented fill:#e8f5e9,stroke:#2e7d32,color:#173b1a
-    classDef pending fill:#fff8e1,stroke:#ef6c00,color:#4e342e,stroke-dasharray: 5 5
-    class CLIENTE,BFF,TOPIC,CORE,LOG implemented
-    class DB pending
-```
-
-El mensaje JSON publicado tiene esta forma:
+El retiro requiere un cuerpo JSON; `cuentaId` no puede estar vacío y el monto mínimo es 1.000:
 
 ```json
-{"cuentaId":"123","monto":50000,"operacion":"RETIRO"}
+{
+  "cuentaId": "123",
+  "monto": 50000
+}
 ```
 
-**Estado de la saga:** el endpoint retorna “Transacción en proceso” tras publicar; el listener actualmente imprime el evento y no inyecta repositorios ni ejecuta un `UPDATE`. No hay evento de confirmación, manejo de errores de negocio, idempotencia ni acción compensatoria. Por ello, el retiro asíncrono es un esqueleto de coreografía, no una saga transaccional completa.
+## Ejemplos de consumo desde PowerShell
 
-## Funcionalidades y límites conocidos
+Solicita tokens para los tres canales:
 
-- BFF Cajero consulta saldo con Resilience4j Circuit Breaker. El fallback devuelve texto con saldo `0.0`; no consulta una caché real (Evolutivo de proyecto).
-- `ApiExceptionHandler` convierte el límite excedido de operaciones del Cajero en HTTP 429 con un mensaje JSON. El contador es local al proceso y en memoria; se reinicia al reiniciar el servicio y no coordina réplicas.
-- El retiro solo publica el evento Kafka; todavía no modifica `saldos_intereses`.
-- Los tres BFF llaman a Core mediante URLs locales fijas, no mediante un cliente balanceado Eureka.
-- `docker-compose.yml` no contiene MySQL; se necesita una instancia externa y la base `bancoxyz`.
+```powershell
+$body = @{ username = 'cliente_cajero'; password = 'cajero123' } | ConvertTo-Json
+$cajeroToken = (Invoke-RestMethod -Method Post -Uri 'http://localhost:9000/api/auth/login' -ContentType 'application/json' -Body $body).access_token
 
+$body = @{ username = 'cliente_web'; password = 'web123' } | ConvertTo-Json
+$webToken = (Invoke-RestMethod -Method Post -Uri 'http://localhost:9000/api/auth/login' -ContentType 'application/json' -Body $body).access_token
+
+$body = @{ username = 'cliente_movil'; password = 'movil123' } | ConvertTo-Json
+$mobileToken = (Invoke-RestMethod -Method Post -Uri 'http://localhost:9000/api/auth/login' -ContentType 'application/json' -Body $body).access_token
+```
+
+Consume las APIs protegidas:
+
+```powershell
+curl.exe -k -i -H "Authorization: Bearer $cajeroToken" https://localhost:8443/api/cajero/saldo
+curl.exe -k -i -H "Authorization: Bearer $webToken" https://localhost:8445/api/web/dashboard
+curl.exe -k -i -H "Authorization: Bearer $mobileToken" https://localhost:8444/api/mobile/resumen
+```
+
+Publica un retiro:
+
+```powershell
+curl.exe -k -i -X POST https://localhost:8443/api/cajero/retiro `
+  -H "Authorization: Bearer $cajeroToken" `
+  -H "Content-Type: application/json" `
+  --data-raw '{"cuentaId":"123","monto":50000}'
+```
+
+Comprueba autorización por roles:
+
+```powershell
+curl.exe -k -i https://localhost:8443/api/cajero/saldo
+curl.exe -k -i -H "Authorization: Bearer $mobileToken" https://localhost:8443/api/cajero/saldo
+```
+
+Se espera `401` sin token y `403` al presentar un token válido que no tiene el rol requerido.
+
+## Retiro asíncrono: alcance actual
+
+`ms-bff-cajero` publica el evento `cajero-retiros-topic`; `ms-transacciones` lo consume y lo escribe en sus logs. El consumidor actual **no persiste el retiro en MySQL, no descuenta saldos ni emite una confirmación de resultado**. Este flujo demuestra mensajería asíncrona, pero todavía no implementa una Saga financiera completa.
+
+El límite de consultas y retiros del BFF Cajero se mantiene en memoria del proceso; no se comparte entre réplicas y se reinicia al reiniciar el servicio.
+
+## Validaciones
+
+Los módulos actuales han sido comprobados manualmente junto con sus endpoints.

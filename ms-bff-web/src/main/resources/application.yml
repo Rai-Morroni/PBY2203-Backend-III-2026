@@ -12,6 +12,15 @@ spring:
     import: optional:configserver:http://localhost:8888
   kafka:
     bootstrap-servers: localhost:29092
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AUTH_SERVER_ISSUER:http://localhost:9000}
+bank:
+  services:
+    transacciones:
+      base-url: ${TRANSACCIONES_SERVICE_URL:http://localhost:8082}
 eureka:
   client:
     service-url:

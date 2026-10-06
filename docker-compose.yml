@@ -1,17 +1,202 @@
 version: '3.8'
+
+# Red interna para comunicación entre contenedores
+networks:
+  bancoxyz-net:
+    driver: bridge
+
 services:
+  # ==========================================
+  # 1. INFRAESTRUCTURA BASE (BD y Mensajería)
+  # ==========================================
+  mysql-db:
+    image: mysql:8.0
+    container_name: mysql-db
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_DATABASE: bancoxyz
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping --protocol=TCP --host=127.0.0.1 --user=root --password=\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - ./var/lib/mysql-files:/var/lib/mysql-files
+    networks:
+      - bancoxyz-net
+
+  mysql-seed:
+    image: mysql:8.0
+    container_name: mysql-seed
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+    volumes:
+      - ./sql/init.sql:/seed/init.sql:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mysql --protocol=TCP --host=mysql-db --user=root --password=\"$${MYSQL_ROOT_PASSWORD}\" < /seed/init.sql"]
+    restart: "no"
+    networks:
+      - bancoxyz-net
+
   kafka:
     image: apache/kafka:3.7.0
-    ports:
-      - "29092:29092"
+    container_name: kafka
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    ports:
+      - "29092:29092"
+    networks:
+      - bancoxyz-net
+
+  # ==========================================
+  # 2. SERVICIOS CORE DE SPRING CLOUD
+  # ==========================================
+  config-server:
+    build: ./config-server
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    networks:
+      - bancoxyz-net
+
+  eureka-server:
+    build: ./eureka-server
+    container_name: eureka-server
+    ports:
+      - "8761:8761"
+    depends_on:
+      - config-server
+    environment:
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+    networks:
+      - bancoxyz-net
+
+  auth-server:
+    build: ./auth-server
+    container_name: auth-server
+    ports:
+      - "9000:9000"
+    depends_on:
+      - config-server
+      - eureka-server
+    environment:
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - AUTH_SERVER_ISSUER=http://auth-server:9000
+    networks:
+      - bancoxyz-net
+
+  # ==========================================
+  # 3. MICROSERVICIOS DE DOMINIO (Lógica y BD)
+  # ==========================================
+  ms-cuentas:
+    build: ./ms-cuentas
+    container_name: ms-cuentas
+    ports:
+      - "8081:8081"
+    depends_on:
+      config-server:
+        condition: service_started
+      eureka-server:
+        condition: service_started
+      mysql-seed:
+        condition: service_completed_successfully
+    environment:
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-db:3306/bancoxyz
+    networks:
+      - bancoxyz-net
+
+  ms-transacciones:
+    build: ./ms-transacciones
+    container_name: ms-transacciones
+    ports:
+      - "8082:8082"
+    depends_on:
+      config-server:
+        condition: service_started
+      eureka-server:
+        condition: service_started
+      mysql-seed:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_started
+    environment:
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-db:3306/bancoxyz
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    networks:
+      - bancoxyz-net
+
+  # ==========================================
+  # 4. MICROSERVICIOS BFF (Gateways de Canales)
+  # ==========================================
+  ms-bff-cajero:
+    build: ./ms-bff-cajero
+    container_name: ms-bff-cajero
+    ports:
+      - "8443:8443"
+    depends_on:
+      - config-server
+      - eureka-server
+      - auth-server
+      - kafka
+    environment:
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://auth-server:9000
+      - AUTH_SERVER_URL=http://auth-server:9000
+      - CUENTAS_SERVICE_URL=http://ms-cuentas:8081
+    networks:
+      - bancoxyz-net
+
+  ms-bff-web:
+    build: ./ms-bff-web
+    container_name: ms-bff-web
+    ports:
+      - "8445:8445"
+    depends_on:
+      - config-server
+      - eureka-server
+      - auth-server
+    environment:
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://auth-server:9000
+      - TRANSACCIONES_SERVICE_URL=http://ms-transacciones:8082
+    networks:
+      - bancoxyz-net
+
+  ms-bff-mobile:
+    build: ./ms-bff-mobile
+    container_name: ms-bff-mobile
+    ports:
+      - "8444:8444"
+    depends_on:
+      - config-server
+      - eureka-server
+      - auth-server
+    environment:
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://auth-server:9000
+    networks:
+      - bancoxyz-net
