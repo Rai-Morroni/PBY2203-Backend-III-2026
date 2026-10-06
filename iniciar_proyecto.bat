@@ -38,6 +38,17 @@ if errorlevel 1 (
 )
 
 echo.
+echo Verificando que todos los microservicios sigan ejecutandose...
+for %%S in (config-server eureka-server auth-server ms-cuentas ms-transacciones ms-bff-cajero ms-bff-web ms-bff-mobile) do (
+    docker compose ps --status running -q %%S | findstr . >NUL
+    if errorlevel 1 (
+        echo ERROR: El servicio %%S no esta ejecutandose. Ultimos logs:
+        docker compose logs --tail 60 %%S
+        goto :error
+    )
+)
+
+echo.
 echo [3/3] Estado de los contenedores:
 docker compose ps -a
 if errorlevel 1 (

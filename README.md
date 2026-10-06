@@ -45,7 +45,7 @@ En Windows, inicia Docker Desktop y ejecuta `iniciar_proyecto.bat` desde el Expl
 .\iniciar_proyecto.bat
 ```
 
-El script comprueba que Docker esté disponible, empaqueta los módulos con `mvnw.cmd clean package -DskipTests`, construye las imágenes y levanta **todo el stack exclusivamente con Docker Compose**. No lanza instancias adicionales de Spring con Maven, por lo que evita duplicar procesos y puertos. Al final muestra el estado de los contenedores y las URLs principales.
+El script comprueba que Docker esté disponible, empaqueta los módulos como JAR ejecutables con `mvnw.cmd clean package -DskipTests`, construye las imágenes y levanta **todo el stack exclusivamente con Docker Compose**. No lanza instancias adicionales de Spring con Maven, por lo que evita duplicar procesos y puertos. También comprueba que los microservicios continúen ejecutándose y muestra sus logs recientes si alguno se detiene durante el inicio.
 
 La carga inicial de MySQL desde los CSV es intencional para esta demo: cada ejecución del script vuelve a crear y poblar las tres tablas base. Los datos generados durante una demostración no se conservan al reiniciar el proyecto.
 
