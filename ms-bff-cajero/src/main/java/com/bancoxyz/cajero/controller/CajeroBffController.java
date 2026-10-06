@@ -3,6 +3,7 @@ package com.bancoxyz.cajero.controller;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -36,8 +37,10 @@ public class CajeroBffController {
     private final AtomicInteger contadorRetiros = new AtomicInteger(0);
     private static final int LIMITE_RETIROS = 1; // Límite de retiro por sesión
 
-    public CajeroBffController() {
-        this.restClient = RestClient.builder().baseUrl("http://localhost:8081").build();
+    public CajeroBffController(
+            RestClient.Builder restClientBuilder,
+            @Value("${bank.services.cuentas.base-url}") String cuentasServiceBaseUrl) {
+        this.restClient = restClientBuilder.baseUrl(cuentasServiceBaseUrl).build();
     }
 
     // 1. Tolerancia a Fallos: Circuit Breaker y contrato DTO

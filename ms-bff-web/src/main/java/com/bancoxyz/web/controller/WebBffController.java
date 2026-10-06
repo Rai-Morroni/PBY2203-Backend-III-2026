@@ -1,6 +1,7 @@
 package com.bancoxyz.web.controller;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,9 +21,10 @@ public class WebBffController {
 
     private final RestClient restClient;
 
-    public WebBffController() {
-        // Se apunta a la URL base del microservicio interno
-        this.restClient = RestClient.builder().baseUrl("http://localhost:8082").build();
+    public WebBffController(
+            RestClient.Builder restClientBuilder,
+            @Value("${bank.services.transacciones.base-url}") String transaccionesServiceBaseUrl) {
+        this.restClient = restClientBuilder.baseUrl(transaccionesServiceBaseUrl).build();
     }
 
     @GetMapping("/dashboard")

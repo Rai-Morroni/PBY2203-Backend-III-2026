@@ -19,6 +19,9 @@ spring:
           issuer-uri: ${AUTH_SERVER_ISSUER:http://localhost:9000}
 bank:
   auth-server-base-url: ${AUTH_SERVER_URL:http://localhost:9000}
+  services:
+    cuentas:
+      base-url: ${CUENTAS_SERVICE_URL:http://localhost:8081}
 eureka:
   client:
     service-url:
